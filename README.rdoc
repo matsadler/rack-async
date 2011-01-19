@@ -1,0 +1,166 @@
+= Rack::Async
+
+Rack::Async is a rack middleware that makes available a thin[https://github.com/macournoyer/thin] like async api on most rack compatible web servers.
+
+It works with mongrel, thin, and all the related mongrel-derived servers I've tried, additionally ebb works fine.
+
+Although WEBrick won't support sending asynchronous replies, using Rack::Async will successfully send everything you ask it to, just bundled up all together like a normal synchronous reply.
+
+It won't work with MacRuby's ControlTower at all.
+
+== Installation
+
+gem install rack-async
+
+== Common problems
+
+=== Rack::Lint::LintError
+Rack::Lint doesn't know anything about async responses, so can't validate them properly, you'll have to turn it off.
+
+=== The response doesn't seem asynchronous in my browser
+Most browsers won't start rendering anything until they have around 1024 bytes of data. One way to get around this is to simply send 1024 bytes of whitespace at the start of your response. If you're just looking to see your response come in chunk by chunk, `curl` doesn't suffer this problem.
+
+== Async Response with EventMachine
+
+Here's how to send an async response with EventMachine that will work across thin, mongrel, ebb, etc
+
+config.ru
+
+   require 'rubygems'
+   require 'rack/async'
+   require 'eventmachine'
+   
+   class EMAsyncApp
+     def call(env)
+       event_machine do
+         EM.add_timer(5) do
+           env['async.callback'].call([200, {}, ["Hello world!"]])
+         end
+       end
+       
+       # returning this signals to the server we are sending an async response
+       Rack::Async::RESPONSE
+     end
+     
+     private
+     # make sure EventMachine is running (if we're on thin it'll be up and
+     # running, but this isn't the case on other servers).
+     def event_machine(&block)
+       if EM.reactor_running?
+         block.call
+       else
+         Thread.new {EM.run}
+         EM.next_tick(block)
+       end
+     end
+   end
+   
+   use Rack::Async
+   run EMAsyncApp.new
+
+== Async Response with Threads
+
+Here's how to send an async response using threads that will work across thin, mongrel, ebb, etc
+
+(we'll just give you the #call method this time)
+
+  def call(env)
+    Thread.new do
+      sleep 5
+      env['async.callback'].call([200, {}, ["Hello world!"]])
+    end
+    
+    Rack::Async::RESPONSE
+  end
+
+== Async Body with EventMachine
+
+Sure sending an asynchronous response is neat, but what really cool is streaming out the body to the client, here's how to do that
+
+config.ru
+
+  require 'rubygems'
+  require 'rack/async'
+  require 'eventmachine'
+  
+  class EMAsyncBodyApp
+    def call(env)
+      body = env['async.body']
+      
+      event_machine do
+        i = 0
+        timer = EM.add_periodic_timer(1) do
+          body << "Hello world!\r\n"
+          i += 1
+          if i >= 5
+            body.finish
+            timer.cancel
+          end
+        end
+      end
+      
+      [200, {}, body]
+    end
+    
+    private
+    def event_machine(&block)
+      if EM.reactor_running?
+        block.call
+      else
+        Thread.new {EM.run}
+        EM.next_tick(block)
+      end
+    end
+  end
+  
+  use Rack::Async
+  run EMAsyncBodyApp.new
+
+== Async Everything with Threads
+
+You can combine the two like so (threaded example this time, but it works just fine with event machine too).
+
+  require 'rubygems'
+  require 'rack/async'
+  require 'thread'
+  
+  class ThreadedAsyncApp
+    def call(env)
+      Thread.new do
+        sleep 1
+        body = env['async.body']
+        env['async.callback'].call([200, {}, body])
+        5.times {sleep 1; body << "Hello world!\r\n";}
+        body.finish
+      end
+      
+      Rack::Async::RESPONSE
+    end
+  end
+  
+  use Rack::Async
+  run ThreadedAsyncApp.new
+
+== Licence
+
+(The MIT License)
+
+Copyright (c) 2011 Matthew Sadler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
