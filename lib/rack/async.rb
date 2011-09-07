@@ -122,6 +122,10 @@ module Rack
         callback(&block)
         errback(&block)
       end
+
+      def finished?
+        @finished
+      end
     end
     
   end
