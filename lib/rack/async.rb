@@ -49,33 +49,94 @@ module Rack
       alias wait pop
     end
     
-    class BlockingBody < Queue
-      def each
-        until @finished && empty?
-          data = pop
-          yield data if data
+    module Deferrable
+      def set_deferred_status(status, *args)
+        @deferred_status = status
+        @deferred_args = args
+        iterator = Proc.new {|block| block.call(*@deferred_args)}
+        case status
+        when :succeeded
+          @callbacks.each(&iterator)
+        when :failed
+          @errbacks.each(&iterator)
+        end
+        @callbacks.clear
+        @errbacks.clear
+      end
+      
+      def succeed(*args)
+        set_deferred_status(:succeeded)
+      end
+      alias finish succeed
+      alias set_deferred_success succeed
+      
+      def fail(*args)
+        set_deferred_status(:failed)
+      end
+      alias set_deferred_failure fail
+      
+      def callback(&block)
+        if @deferred_status == :succeeded
+          block.call(*@deferred_args)
+        elsif @deferred_status != :failed
+          @callbacks.unshift(block)
         end
       end
       
-      def succeed
-        @finished = true
+      def errback(&block)
+        if @deferred_status == :failed
+          block.call(*@deferred_args)
+        elsif @deferred_status != :succeeded
+          @errbacks.unshift(block)
+        end
+      end
+    end
+    
+    class BlockingBody < Queue
+      include Deferrable
+      
+      def initialize(*args)
+        super
+        @callbacks = []
+        @errbacks = []
+      end
+      
+      def each
+        until @deferred_status && empty?
+          data = pop
+          yield data if data
+        end
+      rescue
+        fail
+        raise
+      end
+      
+      def set_deferred_status(*args)
+        super
         self << nil
       end
-      alias finish succeed
-      alias fail succeed
     end
     
     class CallbackBody
+      include Deferrable
+      
       def initialize(*args)
         super
         @buffer = []
         @lock = Mutex.new
+        @callbacks = []
+        @errbacks = []
       end
       
       def <<(data)
         @lock.synchronize do
           if @each_callback
-            @each_callback.call(data)
+            begin
+              @each_callback.call(data)
+            rescue
+              fail
+              raise
+            end
           else
             @buffer << data
           end
@@ -91,37 +152,7 @@ module Rack
         end
       end
       
-      def succeed
-        @callback.call if @callback
-        @finished = true
-      end
-      alias finish succeed
-      
-      def fail
-        @errback.call if @errback
-        @finished = true
-      end
-      
-      def callback(&block)
-        if !@callback && @finished
-          block.call
-        else
-          @callback = block
-        end
-      end
-      
-      def errback(&block)
-        if !@errback && @finished
-          block.call
-        else
-          @errback = block
-        end
-      end
-      
-      def on_eof(&block)
-        callback(&block)
-        errback(&block)
-      end
+      alias on_eof callback # :nodoc: ebb compatibility
     end
     
   end
