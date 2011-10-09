@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name = "rack-async"
-  s.version = "0.0.1"
+  s.version = "0.1.0"
   s.summary = "An asynchronous Rack API for everyone."
   s.description = "Thin's asynchronous API available to any Rack server."
   s.files = Dir["lib/**/*.rb"] << "README.rdoc"
